@@ -35,7 +35,7 @@ ApplicationWindow {
                     onClicked:
                         if (info.visible) {
                             info.visible = false;
-                            player.playFile("http://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4");
+                            player.playFile("https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4");
                         }
                 }
             }

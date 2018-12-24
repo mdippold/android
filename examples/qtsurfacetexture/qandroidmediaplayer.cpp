@@ -2,19 +2,32 @@
 #include "qsurfacetexture.h"
 
 #include <QAndroidJniEnvironment>
+#include <QtAndroid>
+#include <QAndroidJniObject>
 
 QAndroidMediaPlayer::QAndroidMediaPlayer(QObject *parent)
     : QObject(parent)
-    , m_mediaPlayer("android/media/MediaPlayer")
+    , m_mediaPlayer()
 {
+
+
+    QtAndroid::runOnAndroidThreadSync([=](){
+        m_mediaPlayer = QAndroidJniObject::callStaticObjectMethod(
+                    "com/google/android/exoplayer2/ExoPlayerFactory",
+                    "newSimpleInstance",
+                    "(Landroid/content/Context;)Lcom/google/android/exoplayer2/SimpleExoPlayer;",
+                    QtAndroid::androidContext().object<jobject>());
+    });
 }
 
 QAndroidMediaPlayer::~QAndroidMediaPlayer()
 {
-    QAndroidJniEnvironment env;
-    m_mediaPlayer.callMethod<void>("stop");
-    m_mediaPlayer.callMethod<void>("reset");
-    m_mediaPlayer.callMethod<void>("release");
+    QtAndroid::runOnAndroidThreadSync([=](){
+        QAndroidJniEnvironment env;
+        m_mediaPlayer.callMethod<void>("stop");
+        m_mediaPlayer.callMethod<void>("reset");
+        m_mediaPlayer.callMethod<void>("release");
+    });
 }
 
 QSurfaceTexture *QAndroidMediaPlayer::videoOut() const
@@ -34,12 +47,14 @@ void QAndroidMediaPlayer::setVideoOut(QSurfaceTexture *videoOut)
         // Create a new Surface object from our SurfaceTexture
         QAndroidJniObject surface("android/view/Surface",
                                   "(Landroid/graphics/SurfaceTexture;)V",
-                                   m_videoOut->surfaceTexture().object());
+                                  m_videoOut->surfaceTexture().object());
 
-        // Set the new surface to m_mediaPlayer object
-        m_mediaPlayer.callMethod<void>("setSurface",
-                                       "(Landroid/view/Surface;)V",
-                                       surface.object());
+        QtAndroid::runOnAndroidThreadSync([=](){
+            // Set the new surface to m_mediaPlayer object
+            m_mediaPlayer.callMethod<void>("setVideoSurface",
+                                           "(Landroid/view/Surface;)V",
+                                           surface.object());
+        });
     };
 
     if (videoOut->surfaceTexture().isValid())
@@ -50,17 +65,42 @@ void QAndroidMediaPlayer::setVideoOut(QSurfaceTexture *videoOut)
 }
 
 void QAndroidMediaPlayer::playFile(const QString &file)
-{
-    QAndroidJniEnvironment env;
-    m_mediaPlayer.callMethod<void>("stop"); // try to stop the media player.
-    m_mediaPlayer.callMethod<void>("reset"); // try to reset the media player.
+{ 
+    QAndroidJniObject applicationName = QAndroidJniObject::fromString("com.example.qtapp");
+    QAndroidJniObject userAgent = QAndroidJniObject::callStaticObjectMethod("com/google/android/exoplayer2/util/Util",
+                                                                            "getUserAgent",
+                                                                            "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+                                                                            QtAndroid::androidContext().object<jobject>(),
+                                                                            applicationName.object<jstring>());
 
-    // http://developer.android.com/reference/android/media/MediaPlayer.html#setDataSource(java.lang.String) - the path of the file, or the http/rtsp URL of the stream you want to play.
-    m_mediaPlayer.callMethod<void>("setDataSource", "(Ljava/lang/String;)V", QAndroidJniObject::fromString(file).object());
 
-    // prepare media player
-    m_mediaPlayer.callMethod<void>("prepare");
 
-    // start playing
-    m_mediaPlayer.callMethod<void>("start");
+    QAndroidJniObject dataSourceFactory("com/google/android/exoplayer2/upstream/DefaultDataSourceFactory",
+                                        "(Landroid/content/Context;Ljava/lang/String;)V",
+                                        QtAndroid::androidContext().object<jobject>(),
+                                        userAgent.object<jstring>());
+
+
+    QAndroidJniObject extractorFactory("com/google/android/exoplayer2/source/ExtractorMediaSource$Factory",
+                                       "(Lcom/google/android/exoplayer2/upstream/DataSource$Factory;)V",
+                                       dataSourceFactory.object<jobject>());
+
+    QAndroidJniObject uriTest = QAndroidJniObject::callStaticObjectMethod("android/net/Uri",
+                                                                          "parse",
+                                                                          "(Ljava/lang/String;)Landroid/net/Uri;",
+                                                                          QAndroidJniObject::fromString(file).object<jstring>());
+
+    QAndroidJniObject mediaSource = extractorFactory.callObjectMethod("createMediaSource",
+                                                                      "(Landroid/net/Uri;)Lcom/google/android/exoplayer2/source/ExtractorMediaSource;",
+
+                                                                      uriTest.object<jobject>());
+
+    QtAndroid::runOnAndroidThreadSync([=](){
+        m_mediaPlayer.callMethod<void>("prepare",
+                                       "(Lcom/google/android/exoplayer2/source/MediaSource;)V",
+                                       mediaSource.object<jobject>());
+
+        // start playing
+        m_mediaPlayer.callMethod<void>("setPlayWhenReady", "(Z)V", true);
+    });
 }
